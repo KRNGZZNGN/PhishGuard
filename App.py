@@ -10,10 +10,12 @@ import warnings
 import requests
 import socket
 from feature import FeatureExtraction
-from gsb_utils import check_gsb
+from gsb_utils import check_gsb  # ✅ GSB integration
 
+# Suppress warnings
 warnings.filterwarnings('ignore')
 
+# Flask setup
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'your_flask_secret_key')
 
@@ -120,8 +122,19 @@ except FileNotFoundError:
     print("⚠️ WARNING: Missing pickle model files.")
     email_clf, email_vect, url_clf = None, None, None
 
+# try:
+#     with open("modele.pkl", "rb") as f_model, \
+#          open("vectorizer.pkl", "rb") as f_vect:
+#         email_clf = pickle.load(f_model)
+#         email_vect = pickle.load(f_vect)
+#     with open("best_model_random_forest.pkl", "rb") as f_url_model:
+#         url_clf = pickle.load(f_url_model)
+# except FileNotFoundError:
+#     print("⚠️ WARNING: Missing pickle model files.")
+#     email_clf, email_vect, url_clf = None, None, None
+
 # ---------------- GEMINI CONFIG ----------------
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyApiu1zydxzvHFMm2sQbhlaImb_SZPP5sE")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBRyaP3ekJ7Wd9SqkQEY5yxXPygaZj6uXM")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
 
 def analyze_with_gemini(prompt_text):
@@ -171,14 +184,16 @@ def home():
     if 'user' not in session:
         return redirect(url_for('auth'))
 
+    # Default initialization
     xx, url, ai_report = -1, None, None
     reason_info = {'summary': None, 'reasons': []}
     source = "ML"
-    y_pred = -1 
+    y_pred = -1  # Default: Unknown / not analyzed yet
 
     if request.method == 'POST':
         url = request.form.get('url', '').strip()
         if url:
+            # --- Step 0: Check reachability ---
             status = check_url_status(url)
             if not status["reachable"]:
                 xx = 0.0
@@ -190,6 +205,7 @@ def home():
                 }
                 ai_report = f"This site could not be analyzed because it’s unreachable ({status.get('detail', 'unknown reason')})."
             else:
+                # --- Step 1: Google Safe Browsing ---
                 gsb_result = check_gsb(url)
                 if gsb_result['label'] == 'phishing':
                     xx = 1.0
@@ -201,6 +217,7 @@ def home():
                     }
                     ai_report = "This URL is phishing because it has been reported as unsafe in Google Safe Browsing."
                 else:
+                    # --- Step 2: ML model prediction ---
                     if url_clf is None:
                         flash("⚠️ URL ML model not loaded.", "danger")
                         ai_report = "Unable to analyze because the ML model is not available."
@@ -214,6 +231,7 @@ def home():
                             xx = round(pro_safe, 2)
                             reason_info = generate_reason(features)
 
+                            # --- Step 3: Gemini AI Analysis ---
                             prompt = (
                                 f"Analyze this URL for phishing: {url}. "
                                 f"Respond with EXACTLY ONE sentence starting with either "
@@ -221,6 +239,7 @@ def home():
                             )
                             ai_report = analyze_with_gemini(prompt)
 
+                            # --- Step 4: Override ML if Gemini says phishing ---
                             if ai_report:
                                 ai_text = ai_report.lower()
                                 if any(word in ai_text for word in ["phishing", "malicious", "dangerous", "unsafe"]):
@@ -239,6 +258,7 @@ def home():
                             ai_report = f"Analysis failed due to error: {e}"
                             print(f"Prediction failed for {url}: {e}")
 
+            # --- Step 5: Save result to DB ---
             try:
                 conn = sqlite3.connect(DB_FILE)
                 cursor = conn.cursor()
@@ -251,6 +271,7 @@ def home():
             except Exception as e:
                 print(f"DB insert failed: {e}")
 
+    # --- Step 6: Render template ---
     return render_template(
         'index.html',
         user=session.get('user'),
